@@ -75,47 +75,63 @@ export const CreateTrip = () => {
   useEffect(() => {
     if (query.trim().length < 2) {
       setSuggestions([]);
+      setShowDropdown(false);
       return;
     }
 
     const delayDebounce = setTimeout(async () => {
       try {
         const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1`
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=12&addressdetails=1`,
+          { headers: { 'Accept-Language': 'en' } }
         );
         const data = await res.json();
-        if (Array.isArray(data)) {
-          const cityNames = data
-            .map((item: any) => {
-              const addr = item.address;
-              if (!addr) return item.display_name.split(',').slice(0, 3).join(',').trim();
-              
-              // Extract settlement name
-              const name = addr.city || addr.town || addr.village || addr.municipality || addr.county || addr.state || addr.island;
-              if (!name) return null;
-              
-              const region = addr.state || addr.region || "";
-              const country = addr.country || "";
-              
-              let formatted = name;
-              if (region && region.toLowerCase() !== name.toLowerCase()) {
-                formatted += `, ${region}`;
-              }
-              if (country) {
-                formatted += `, ${country}`;
-              }
-              return formatted;
-            })
-            .filter(Boolean) as string[];
-          
-          // Remove duplicates
-          const uniqueSuggestions = Array.from(new Set(cityNames));
-          setSuggestions(uniqueSuggestions);
+        if (Array.isArray(data) && data.length > 0) {
+          const seen = new Set<string>();
+          const cityNames: string[] = [];
+
+          for (const item of data) {
+            const addr = item.address || {};
+
+            // Be permissive: accept any settlement-level name
+            const name =
+              addr.city ||
+              addr.town ||
+              addr.village ||
+              addr.municipality ||
+              addr.suburb ||
+              addr.district ||
+              addr.hamlet ||
+              addr.county ||
+              addr.state;
+
+            if (!name) continue;
+
+            // Build label: Name, State/Region, Country
+            const parts: string[] = [name];
+            const region = addr.state || addr.region || "";
+            const country = addr.country || "";
+            if (region && region.toLowerCase() !== name.toLowerCase()) parts.push(region);
+            if (country) parts.push(country);
+
+            const label = parts.join(", ");
+            if (!seen.has(label)) {
+              seen.add(label);
+              cityNames.push(label);
+            }
+
+            if (cityNames.length >= 6) break;
+          }
+
+          setSuggestions(cityNames);
+          if (cityNames.length > 0) setShowDropdown(true);
+        } else {
+          setSuggestions([]);
         }
       } catch (err) {
         console.error("Failed to fetch autocomplete suggestions:", err);
       }
-    }, 300);
+    }, 500); // 500ms debounce to respect Nominatim rate limits
 
     return () => clearTimeout(delayDebounce);
   }, [query]);

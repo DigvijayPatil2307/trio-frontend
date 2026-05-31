@@ -76,11 +76,7 @@ const getFallbackImageByCategory = (text: string) => {
   return "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=600&auto=format&fit=crop";
 };
 
-const getUnsplashUrl = (query: string) => {
-  const encoded = encodeURIComponent(query);
-  // Use Unsplash source API for dynamic real photos
-  return `https://source.unsplash.com/600x400/?${encoded}`;
-};
+// source.unsplash.com is deprecated — we rely on Wikipedia + category fallback only
 
 const PlaceImage = ({ placeName, destination, className }: { placeName: string; destination?: string; className?: string }) => {
   const cleanedName = placeName
@@ -94,21 +90,17 @@ const PlaceImage = ({ placeName, destination, className }: { placeName: string; 
     return <div className={`bg-slate-100 animate-pulse ${className}`} />;
   }
 
-  // Priority: 1) Wikipedia image, 2) Unsplash with place+destination, 3) category fallback
-  const unsplashQuery = destination 
-    ? `${cleanedName} ${destination}` 
-    : cleanedName;
-  
-  const primaryUrl = imageUrl || getUnsplashUrl(unsplashQuery);
-  const fallbackUrl = getFallbackImageByCategory(placeName);
+  // Priority: 1) Wikipedia image, 2) category-based Unsplash static URL
+  const categoryFallback = getFallbackImageByCategory(placeName);
+  const finalUrl = imgError ? categoryFallback : (imageUrl || categoryFallback);
 
   return (
     <img
-      src={imgError ? fallbackUrl : primaryUrl}
+      src={finalUrl}
       alt={cleanedName}
       className={`object-cover ${className}`}
       referrerPolicy="no-referrer"
-      onError={() => setImgError(true)}
+      onError={() => !imgError && setImgError(true)}
     />
   );
 };
@@ -473,6 +465,20 @@ export const TripDetails = () => {
     }
   }, [mapCenter, markers]);
 
+  // Helper to geocode a query against Nominatim, returns {lat,lon} or null
+  const geocodeQuery = async (query: string): Promise<{ lat: number; lon: number } | null> => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`
+      );
+      const data = await res.json();
+      if (data && data.length > 0) {
+        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      }
+    } catch (e) { /* silent */ }
+    return null;
+  };
+
   const handleActivityClick = async (day: number, idx: number) => {
     const markerId = `${day}-${idx}`;
     const map = mapInstanceRef.current;
@@ -485,42 +491,45 @@ export const TripDetails = () => {
         if (activityText) {
           try {
             const cleanedName = extractPlaceName(activityText);
-            toast.info(`Locating "${cleanedName}" on map...`);
-            const res = await fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanedName + ", " + trip.destination)}&limit=1`
-            );
-            const data = await res.json();
-            if (data && data.length > 0) {
+            toast.info(`Locating on map...`);
+
+            // Strategy 1: exact extracted name + destination
+            let coord = await geocodeQuery(`${cleanedName}, ${trip.destination}`);
+
+            // Strategy 2: try each comma-separated segment of the original text
+            if (!coord) {
+              const segments = activityText.split(/[,;&]/).map(s => s.trim()).filter(s => s.length > 3);
+              for (const seg of segments) {
+                const segClean = extractPlaceName(seg);
+                coord = await geocodeQuery(`${segClean}, ${trip.destination}`);
+                if (coord) break;
+              }
+            }
+
+            // Strategy 3: just the destination itself as anchor
+            if (!coord && mapCenter[0] !== 0) {
+              toast.warning(`Could not locate activity precisely. Centering on ${trip.destination}.`);
+              map.setView(mapCenter, 14, { animate: true, duration: 0.8 });
+              return;
+            }
+
+            if (coord) {
               const L = (window as any).L;
               let leafletMarker: any = null;
               if (L) {
                 const customPopup = `
-                  <div style="font-family: sans-serif; font-size: 12px; padding: 4px; max-width: 160px;">
-                    <strong style="color: #4f46e5; display: block; margin-bottom: 2px;">Activity</strong>
-                    <span style="font-weight: 600; color: #1e293b;">${activityText}</span>
+                  <div style="font-family: sans-serif; font-size: 12px; padding: 6px 8px; max-width: 200px; line-height: 1.4;">
+                    <strong style="color: #4f46e5; display: block; margin-bottom: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;">Activity</strong>
+                    <span style="font-weight: 600; color: #1e293b; font-size: 12px;">${activityText}</span>
                   </div>
                 `;
-                leafletMarker = L.marker([parseFloat(data[0].lat), parseFloat(data[0].lon)])
+                leafletMarker = L.marker([coord.lat, coord.lon])
                   .addTo(map)
                   .bindPopup(customPopup);
               }
-
-              const newMarker = {
-                id: markerId,
-                title: activityText,
-                lat: parseFloat(data[0].lat),
-                lon: parseFloat(data[0].lon),
-                leafletMarker
-              };
-              
+              const newMarker = { id: markerId, title: activityText, lat: coord.lat, lon: coord.lon, leafletMarker };
               setMarkers(prev => [...prev, newMarker]);
               targetMarker = newMarker;
-            } else {
-              toast.warning(`Could not locate "${cleanedName}". Centering on destination city.`);
-              if (mapCenter[0] !== 0 && map) {
-                map.setView(mapCenter, 14, { animate: true, duration: 1.0 });
-              }
-              return;
             }
           } catch (err) {
             console.error("On-demand geocoding failed:", err);
@@ -609,9 +618,10 @@ export const TripDetails = () => {
         )}
       </div>
 
-      {/* Header section (replaces Welcome Header) */}
-      <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between bg-white rounded-2xl border border-slate-200 p-6 shadow-sm print:hidden">
-        <div className="space-y-4">
+      {/* Header section */}
+      <div className="flex flex-col gap-4 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm print:hidden">
+        {/* Top row: destination + status + actions */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-800 flex flex-wrap items-center gap-3">
               <span>{trip.destination}</span>
@@ -620,24 +630,6 @@ export const TripDetails = () => {
                 {badgeText[tripStatus]}
               </span>
             </h1>
-            <p 
-              className="text-slate-500 text-sm font-semibold flex items-center gap-2 cursor-pointer hover:text-indigo-600 transition-colors mt-1.5 no-print"
-              onClick={() => {
-                setNewStartDate(new Date(trip.startDate).toISOString().split('T')[0]);
-                setNewNumberOfDays(trip.numberOfDays);
-                setShowDateEditDialog(true);
-              }}
-              title="Click to edit dates"
-            >
-              <CalendarIcon className="w-4 h-4 text-indigo-500 shrink-0" />
-              <span>{dateLabel}</span>
-              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 border border-indigo-100">Edit</span>
-            </p>
-            {/* Print-only dates display */}
-            <p className="hidden print:flex items-center gap-1.5 text-sm text-slate-600 font-semibold mt-1">
-              <CalendarIcon className="w-4 h-4 text-slate-500 shrink-0" />
-              <span>{dateLabel}</span>
-            </p>
           </div>
           <div className="flex flex-wrap gap-2 no-print">
             <Button variant="outline" size="sm" className="rounded-full flex items-center gap-1.5 font-bold h-9 text-xs" onClick={handleShare}>
@@ -654,18 +646,61 @@ export const TripDetails = () => {
             </Button>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-6 self-stretch md:self-auto justify-between border-t border-slate-100 pt-4 md:border-t-0 md:pt-0">
-          <div className="flex gap-8">
-            <div className="text-center">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Days</p>
-              <p className="text-2xl font-bold text-indigo-600">{trip.numberOfDays}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Budget Type</p>
-              <p className="text-2xl font-bold text-slate-800 tracking-tight">{trip.budgetType}</p>
+
+        {/* Date range + stats row */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* FROM date pill */}
+          <div
+            className="flex items-center gap-2.5 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5 cursor-pointer hover:bg-indigo-100 transition-colors no-print group"
+            onClick={() => {
+              setNewStartDate(hasValidStartDate ? new Date(trip.startDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+              setNewNumberOfDays(trip.numberOfDays);
+              setShowDateEditDialog(true);
+            }}
+            title="Click to edit trip dates"
+          >
+            <CalendarIcon className="w-4 h-4 text-indigo-500 shrink-0" />
+            <div>
+              <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest leading-none">From</p>
+              <p className="text-sm font-bold text-indigo-700 leading-tight mt-0.5">{formattedStartDate}</p>
             </div>
           </div>
+
+          {/* Arrow divider */}
+          <div className="text-slate-300 font-bold text-lg select-none">→</div>
+
+          {/* TO date pill */}
+          <div
+            className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 cursor-pointer hover:bg-slate-100 transition-colors no-print"
+            onClick={() => {
+              setNewStartDate(hasValidStartDate ? new Date(trip.startDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+              setNewNumberOfDays(trip.numberOfDays);
+              setShowDateEditDialog(true);
+            }}
+            title="Click to edit trip dates"
+          >
+            <CalendarIcon className="w-4 h-4 text-slate-400 shrink-0" />
+            <div>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">To</p>
+              <p className="text-sm font-bold text-slate-700 leading-tight mt-0.5">{formattedEndDate}</p>
+            </div>
+          </div>
+
+          {/* Duration + Budget chips */}
+          <div className="flex items-center gap-2 ml-1">
+            <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-200">{trip.numberOfDays} Days</span>
+            <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-200">{trip.budgetType} Budget</span>
+          </div>
+
+          {/* Edit hint */}
+          <span className="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 no-print">✎ Click dates to edit</span>
         </div>
+
+        {/* Print-only date line */}
+        <p className="hidden print:flex items-center gap-1.5 text-sm text-slate-600 font-semibold">
+          <CalendarIcon className="w-4 h-4 text-slate-500 shrink-0" />
+          <span>{dateLabel}</span>
+        </p>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6 items-start">
@@ -785,11 +820,11 @@ export const TripDetails = () => {
           </div>
         </div>
 
-        {/* Right Sidebar */}
-        <div className="lg:w-1/3 flex flex-col gap-6">
+        {/* Right Sidebar — sticky as a whole so it doesn't overlap the itinerary */}
+        <div className="lg:w-1/3 flex flex-col gap-6 lg:sticky lg:top-20 lg:self-start">
           
           {/* Leaflet Map Card */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col h-[320px] shrink-0 no-print lg:sticky lg:top-20" style={{ zIndex: 5 }}>
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col h-[320px] shrink-0 no-print" style={{ overflow: 'visible', position: 'relative', zIndex: 1 }}>
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <Map className="w-4 h-4 text-indigo-500" /> Live Route Map
             </h3>
