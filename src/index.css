@@ -130,28 +130,36 @@
 }
 
 @media print {
-  /* Hide header navigation, interactive buttons, and modals */
+  /* Hide all interactive elements, map, sidebars, expense tracker */
   header,
   .no-print,
   button,
-  [role="dialog"] {
+  [role="dialog"],
+  #leaflet-map,
+  .leaflet-container,
+  .Compass,
+  .badge {
     display: none !important;
   }
 
-  /* Reset main layouts and spacing for printing */
+  /* Reset layout constraints to occupy full A4/Letter size */
   body, 
+  html,
+  #root,
   .min-h-screen, 
   main {
-    background: white !important;
-    color: black !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
     padding: 0 !important;
     margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
     box-shadow: none !important;
+    overflow: visible !important;
   }
 
   main {
-    max-width: 100% !important;
-    width: 100% !important;
+    padding: 1.5cm !important;
   }
 
   /* Force background colors and image rendering */
@@ -160,24 +168,142 @@
     print-color-adjust: exact !important;
   }
 
-  /* Expand scrolling containers to full length so items are not cut off */
+  /* Stack main sections vertically */
+  .flex-col.lg\:flex-row {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 24px !important;
+    width: 100% !important;
+  }
+
+  /* Expand scrolling containers to full height */
   .max-h-\[600px\],
-  .max-h-\[350px\] {
+  .max-h-\[350px\],
+  .overflow-y-auto {
     max-height: none !important;
     overflow: visible !important;
   }
 
-  /* Stack sidebar contents nicely below the main itinerary list */
-  .flex-col.lg\:flex-row {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 1.5rem !important;
+  /* Custom header styling */
+  .text-2xl.font-bold {
+    font-size: 26pt !important;
+    color: #1e1b4b !important; /* Indigo 950 */
+    font-weight: 800 !important;
+    margin-bottom: 5pt !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+    padding-bottom: 12pt !important;
   }
 
-  /* Ensure page breaks don't cut individual day cards in half */
-  .border-b.border-slate-100 {
+  /* Day heading styles */
+  .timeline-day, h3 {
+    font-size: 14pt !important;
+    color: #4f46e5 !important; /* Indigo 600 */
+    margin-top: 18pt !important;
+    margin-bottom: 8pt !important;
+    font-weight: 700 !important;
+    page-break-after: avoid !important;
+  }
+
+  /* Hide vertical timeline line for clean printing print layout */
+  .border-l.border-slate-200 {
+    border-left: none !important;
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  /* Activity item styling */
+  .group.relative.bg-white {
     page-break-inside: avoid !important;
-    break-inside: avoid !important;
+    border: none !important;
+    border-bottom: 1px dashed #cbd5e1 !important;
+    border-radius: 0 !important;
+    padding: 12pt 0 !important;
+    box-shadow: none !important;
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 16pt !important;
+    align-items: center !important;
+    background: transparent !important;
+  }
+
+  .group.relative.bg-white img {
+    width: 55pt !important;
+    height: 55pt !important;
+    border-radius: 8px !important;
+  }
+
+  /* Hide print-unfriendly tags and buttons inside activities */
+  .text-\[10px\], 
+  svg, 
+  .v-bg,
+  .bg-indigo-500\/80,
+  .flex-shrink-0.text-slate-400 {
+    display: none !important;
+  }
+
+  /* Budget breakdown box print styles */
+  .bg-indigo-900 {
+    background: #f8fafc !important; /* Slate 50 */
+    color: #0f172a !important; /* Slate 900 */
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    padding: 16pt !important;
+    margin-top: 24pt !important;
+    page-break-inside: avoid !important;
+  }
+
+  .bg-indigo-900 h3 {
+    color: #475569 !important; /* Slate 600 */
+    margin-top: 0 !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+    padding-bottom: 4pt !important;
+    font-size: 12pt !important;
+  }
+
+  .bg-indigo-900 .grid-cols-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8pt !important;
+  }
+
+  .bg-indigo-900 span {
+    color: #334155 !important;
+    font-weight: 600 !important;
+  }
+
+  /* Hotel Picks print styling */
+  .bg-white.border.border-slate-200.p-6 {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    padding: 16pt !important;
+    margin-top: 20pt !important;
+    page-break-inside: avoid !important;
+  }
+
+  .bg-white.border.border-slate-200.p-6 h3 {
+    margin-top: 0 !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+    padding-bottom: 4pt !important;
+    font-size: 12pt !important;
+  }
+
+  /* Companion Details print layout */
+  .bg-white.border.border-slate-200.p-6.shadow-sm {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    padding: 16pt !important;
+    margin-top: 20pt !important;
+    page-break-inside: avoid !important;
+  }
+
+  .bg-white.border.border-slate-200.p-6.shadow-sm .grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 16pt !important;
+  }
+
+  .bg-white.border.border-slate-200.p-6.shadow-sm .hidden.md\:block {
+    display: none !important;
   }
 }
 

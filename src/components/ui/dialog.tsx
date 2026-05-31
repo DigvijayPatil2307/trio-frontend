@@ -49,7 +49,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"
@@ -58,7 +58,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
       {/* Content Panel */}
       <div
         className={cn(
-          "relative z-50 w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl transition-all duration-300 animate-in fade-in zoom-in-95 sm:max-w-md mx-4",
+          "relative z-[9999] w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl transition-all duration-300 animate-in fade-in zoom-in-95 sm:max-w-md mx-4",
           className
         )}
         {...props}

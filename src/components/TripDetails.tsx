@@ -12,6 +12,47 @@ import { Input } from "./ui/input";
 import { useWikipediaImage } from "../hooks/useWikipediaImage";
 import { useToast } from "../lib/ToastContext";
 
+const extractPlaceName = (desc: string) => {
+  let place = desc;
+  
+  // Strip leading phrases
+  place = place.replace(/^(morning|afternoon|evening|night|early morning|late night)\s+/i, '');
+  place = place.replace(/^(exploration|visit|tour|trip|journey|dinner|lunch|breakfast|sightseeing|relaxation|shopping|walk)\s+(of|at|to|in)\s+/i, '');
+  place = place.replace(/^(visit|explore|enjoy|see|tour|walk around|relax at|stay at|check into|dine at|eat at|shop at|go to)\s+/i, '');
+  
+  // If it contains " at " (e.g. "Lunch at Hawa Mahal"), pick what follows " at "
+  if (place.toLowerCase().includes(" at ")) {
+    const parts = place.split(/\s+at\s+/i);
+    if (parts[1]) place = parts[1];
+  }
+  // If it contains " of " (e.g. "exploration of Amber Fort"), pick what follows " of "
+  else if (place.toLowerCase().includes(" of ")) {
+    const parts = place.split(/\s+of\s+/i);
+    if (parts[1]) place = parts[1];
+  }
+  // If it contains " to " (e.g. "travel to Eiffel Tower"), pick what follows " to "
+  else if (place.toLowerCase().includes(" to ")) {
+    const parts = place.split(/\s+to\s+/i);
+    if (parts[1]) place = parts[1];
+  }
+  // If it contains " in " (e.g. "Sightseeing in Central Park"), pick what follows " in "
+  else if (place.toLowerCase().includes(" in ")) {
+    const parts = place.split(/\s+in\s+/i);
+    if (parts[1]) place = parts[1];
+  }
+
+  // Strip trailing descriptions like "and shopping", "for lunch", "and its grand courtyards"
+  place = place.split(/\s+(and|for|with|to\s+explore|to\s+see|to\s+dine)\s+/i)[0];
+  
+  // Clean up any remaining leading/trailing articles
+  place = place.replace(/^(the|a|an)\s+/i, '').trim();
+  
+  // Strip trailing punctuation
+  place = place.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+  
+  return place || desc;
+};
+
 const PlaceImage = ({ placeName, className }: { placeName: string; className?: string }) => {
   const cleanedName = placeName
     .replace(/^(visit|explore|enjoy|dinner at|lunch at|breakfast at|sightseeing at|go to|see|tour|walk around|relax at|stay at|check into)\s+/i, '')
@@ -65,6 +106,8 @@ export const TripDetails = () => {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [companions, setCompanions] = useState<string[]>(["alex.traveler@gmail.com", "sophia.explorer@gmail.com"]);
+  const [showDeleteDayConfirm, setShowDeleteDayConfirm] = useState(false);
+  const [pendingDeleteDayInfo, setPendingDeleteDayInfo] = useState<{ day: number; activityIndex: number } | null>(null);
 
   const navigate = useNavigate();
 
@@ -108,14 +151,17 @@ export const TripDetails = () => {
 
   const handleRemoveActivity = async (day: number, activityIndex: number) => {
     const targetDay = trip?.itinerary.days.find((d) => d.day === day);
-    let removeDay = false;
 
     if (targetDay && targetDay.activities.length === 1) {
-      if (window.confirm(`Removing this activity will leave Day ${day} empty. Would you like to completely delete Day ${day} and shorten your trip to ${trip.numberOfDays - 1} days?`)) {
-        removeDay = true;
-      }
+      setPendingDeleteDayInfo({ day, activityIndex });
+      setShowDeleteDayConfirm(true);
+      return;
     }
 
+    await confirmRemoveActivity(day, activityIndex, false);
+  };
+
+  const confirmRemoveActivity = async (day: number, activityIndex: number, removeDay: boolean) => {
     try {
       const res = await api.patch(`/trips/${id}/remove-activity`, { day, activityIndex, removeDay });
       setTrip(res.data);
@@ -127,6 +173,9 @@ export const TripDetails = () => {
     } catch (error) {
       console.error("Failed to remove activity");
       toast.error("Failed to remove activity.");
+    } finally {
+      setShowDeleteDayConfirm(false);
+      setPendingDeleteDayInfo(null);
     }
   };
 
@@ -250,8 +299,9 @@ export const TripDetails = () => {
         const markerList: any[] = [];
         for (const act of activityList.slice(0, 8)) {
           try {
+            const cleanedName = extractPlaceName(act.title);
             const actRes = await fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(act.title + ", " + trip.destination)}&limit=1`
+              `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanedName + ", " + trip.destination)}&limit=1`
             );
             const actData = await actRes.json();
             if (actData && actData.length > 0) {
@@ -390,17 +440,6 @@ export const TripDetails = () => {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-6 self-stretch md:self-auto justify-between border-t border-slate-100 pt-4 md:border-t-0 md:pt-0">
-          <div className="flex -space-x-2 overflow-hidden items-center" title="Companions invited">
-            {companions.map((email, idx) => (
-              <div
-                key={idx}
-                className="inline-block h-8 w-8 rounded-full ring-2 ring-white bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 uppercase shadow-sm cursor-help animate-in fade-in zoom-in-50"
-                title={email}
-              >
-                {email[0]}
-              </div>
-            ))}
-          </div>
           <div className="flex gap-8">
             <div className="text-center">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Days</p>
@@ -442,10 +481,29 @@ export const TripDetails = () => {
           
           {/* Connected timeline daily schedule */}
           <div className="flex-1 p-4 md:p-6 flex flex-col gap-8 overflow-y-auto max-h-[600px] scroll-smooth">
-            {trip.itinerary.days.map((dayPlan) => (
-              <div key={dayPlan.day} className="flex flex-col sm:flex-row gap-6 border-b border-slate-100 pb-8 last:border-0 last:pb-0">
-                <div className="flex-1">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase mb-4">Day {dayPlan.day}: {dayPlan.title}</h3>
+            {trip.itinerary.days.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center space-y-4">
+                <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center shadow-inner animate-pulse">
+                  <Compass className="w-8 h-8 text-indigo-500" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-slate-800">Your Itinerary is Empty</h3>
+                  <p className="text-sm text-slate-500 max-w-sm">You have removed all days and activities. Add a new activity to start planning again!</p>
+                </div>
+                <div className="pt-2">
+                  <Button 
+                    onClick={() => setActiveAddActivityDay(1)} 
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-xl flex items-center gap-2 border-none outline-none cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4 text-white" /> Add Day 1 Activity
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              trip.itinerary.days.map((dayPlan) => (
+                <div key={dayPlan.day} className="flex flex-col sm:flex-row gap-6 border-b border-slate-100 pb-8 last:border-0 last:pb-0">
+                  <div className="flex-1">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-4">Day {dayPlan.day}: {dayPlan.title}</h3>
                   <div className="relative pl-6 border-l border-slate-200 ml-4 space-y-6">
                     {dayPlan.activities.map((activity, idx) => {
                       const colorVariants = [
@@ -510,7 +568,7 @@ export const TripDetails = () => {
                   </div>
                 </div>
               </div>
-            ))}
+            )))}
           </div>
         </div>
 
@@ -830,6 +888,42 @@ export const TripDetails = () => {
             <Button variant="outline" onClick={() => setShowInviteModal(false)}>Close</Button>
             <Button onClick={handleInvite} className="bg-indigo-600 hover:bg-indigo-700 text-white" disabled={!inviteEmail || !inviteEmail.includes("@")}>
               Send Invite
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Day Confirmation Dialog */}
+      <Dialog open={showDeleteDayConfirm} onOpenChange={(open) => !open && setShowDeleteDayConfirm(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-red-500" /> Delete Empty Day?
+            </DialogTitle>
+            <DialogDescription className="text-slate-500 pt-2 leading-relaxed">
+              Removing this activity will leave <strong>Day {pendingDeleteDayInfo?.day}</strong> empty. 
+              Would you like to completely remove this day and shorten your trip to <strong>{Math.max(1, (trip?.numberOfDays || 1) - 1)} days</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setShowDeleteDayConfirm(false);
+                setPendingDeleteDayInfo(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              className="bg-red-600 hover:bg-red-700 text-white font-bold" 
+              onClick={() => {
+                if (pendingDeleteDayInfo) {
+                  confirmRemoveActivity(pendingDeleteDayInfo.day, pendingDeleteDayInfo.activityIndex, true);
+                }
+              }}
+            >
+              Delete Day
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -79,12 +79,36 @@ export const CreateTrip = () => {
     const delayDebounce = setTimeout(async () => {
       try {
         const res = await fetch(
-          `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=5&namespace=0&format=json&origin=*`
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1`
         );
         const data = await res.json();
-        // Wikipedia OpenSearch response format: [query_term, [title_suggestions], ...]
-        if (data && Array.isArray(data[1])) {
-          setSuggestions(data[1]);
+        if (Array.isArray(data)) {
+          const cityNames = data
+            .map((item: any) => {
+              const addr = item.address;
+              if (!addr) return item.display_name.split(',').slice(0, 3).join(',').trim();
+              
+              // Extract settlement name
+              const name = addr.city || addr.town || addr.village || addr.municipality || addr.county || addr.state || addr.island;
+              if (!name) return null;
+              
+              const region = addr.state || addr.region || "";
+              const country = addr.country || "";
+              
+              let formatted = name;
+              if (region && region.toLowerCase() !== name.toLowerCase()) {
+                formatted += `, ${region}`;
+              }
+              if (country) {
+                formatted += `, ${country}`;
+              }
+              return formatted;
+            })
+            .filter(Boolean) as string[];
+          
+          // Remove duplicates
+          const uniqueSuggestions = Array.from(new Set(cityNames));
+          setSuggestions(uniqueSuggestions);
         }
       } catch (err) {
         console.error("Failed to fetch autocomplete suggestions:", err);
@@ -198,12 +222,13 @@ export const CreateTrip = () => {
                 autoComplete="off"
               />
               {showDropdown && suggestions.length > 0 && (
-                <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden">
+                <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 max-h-56 overflow-y-auto">
                   {suggestions.map((sug, idx) => (
                     <div
                       key={idx}
                       className="px-4 py-3.5 hover:bg-indigo-50 cursor-pointer text-sm font-semibold text-slate-700 flex items-center gap-2 transition-colors border-b border-slate-100 last:border-b-0"
-                      onClick={() => {
+                      onMouseDown={(e) => {
+                        e.preventDefault(); // Prevents input blur before state updates
                         setQuery(sug);
                         setValue("destination", sug, { shouldValidate: true });
                         setSuggestions([]);
