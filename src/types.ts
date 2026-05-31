@@ -47,6 +47,8 @@ export interface Trip {
   numberOfDays: number;
   budgetType: "Low" | "Medium" | "High";
   interests: string[];
+  startDate: string;
+  companions: string[];
   itinerary: TripItinerary;
   createdAt: string;
   updatedAt: string;

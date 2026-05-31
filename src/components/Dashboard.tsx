@@ -5,10 +5,63 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "./ui/button";
 import { useAuth } from "../lib/AuthContext";
 import { useWikipediaImage } from "../hooks/useWikipediaImage";
-import { Calendar, Wallet, Search, SlidersHorizontal } from "lucide-react";
+import { Calendar, Wallet, Search, SlidersHorizontal, AlertCircle } from "lucide-react";
+import { useToast } from "../lib/ToastContext";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
+
+const formatDateRange = (startDateStr: string | Date, daysCount: number) => {
+  if (!startDateStr) return `${daysCount} Days`;
+  const start = new Date(startDateStr);
+  const end = new Date(start);
+  end.setDate(start.getDate() + (daysCount - 1));
+  
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+  
+  if (start.getFullYear() === end.getFullYear()) {
+    const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const endStr = end.toLocaleDateString('en-US', options);
+    return `${startStr} — ${endStr}`;
+  }
+  
+  return `${start.toLocaleDateString('en-US', options)} — ${end.toLocaleDateString('en-US', options)}`;
+};
+
+const getTripStatus = (startDateStr: string | Date, daysCount: number) => {
+  if (!startDateStr) return "upcoming";
+  
+  const start = new Date(startDateStr);
+  start.setHours(0,0,0,0);
+  
+  const end = new Date(start);
+  end.setDate(start.getDate() + daysCount);
+  end.setHours(23,59,59,999);
+  
+  const now = new Date();
+  
+  if (now < start) {
+    return "upcoming";
+  } else if (now > end) {
+    return "completed";
+  } else {
+    return "active";
+  }
+};
 
 const TripCard: React.FC<{ trip: Trip; onDelete: (id: string) => void }> = ({ trip, onDelete }) => {
   const { imageUrl } = useWikipediaImage(trip.destination);
+  const status = getTripStatus(trip.startDate, trip.numberOfDays);
+  
+  const badgeColors = {
+    upcoming: "bg-indigo-600/90 text-white border-indigo-400",
+    active: "bg-emerald-600/90 text-white border-emerald-400 flex items-center gap-1.5",
+    completed: "bg-slate-500/90 text-white border-slate-400"
+  };
+
+  const badgeText = {
+    upcoming: "Upcoming",
+    active: "Active Now",
+    completed: "Completed"
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:border-indigo-300 transition-colors group">
@@ -20,17 +73,21 @@ const TripCard: React.FC<{ trip: Trip; onDelete: (id: string) => void }> = ({ tr
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
         <div className="absolute bottom-3 left-4 text-white z-10">
-          <span className="bg-indigo-500/80 backdrop-blur-md text-[10px] font-bold px-2 py-1 rounded uppercase mb-1 inline-block">Upcoming</span>
+          <span className={`backdrop-blur-md text-[9px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider mb-1.5 inline-flex items-center ${badgeColors[status]}`}>
+            {status === 'active' && <span className="w-1.5 h-1.5 rounded-full bg-white inline-block animate-pulse" />}
+            {badgeText[status]}
+          </span>
           <h2 className="text-lg font-bold line-clamp-1 drop-shadow-md">{trip.destination}</h2>
         </div>
       </div>
       <div className="flex-1 p-5 flex flex-col gap-4">
         <div className="flex gap-4 text-xs font-medium text-slate-600">
-          <div className="flex items-center gap-1">
-            <Calendar className="w-3 h-3 text-indigo-400" /> {trip.numberOfDays} Days
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+            <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            <span>{formatDateRange(trip.startDate, trip.numberOfDays)} ({trip.numberOfDays} Days)</span>
           </div>
           <div className="flex items-center gap-1">
-            <Wallet className="w-3 h-3 text-indigo-400" /> {trip.budgetType}
+            <Wallet className="w-3.5 h-3.5 text-indigo-500 shrink-0" /> {trip.budgetType}
           </div>
         </div>
         <div className="flex flex-wrap gap-1">
@@ -43,7 +100,7 @@ const TripCard: React.FC<{ trip: Trip; onDelete: (id: string) => void }> = ({ tr
           <Link to={`/trip/${trip._id}`} className="inline-flex items-center justify-center border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 rounded-lg w-full text-xs h-8 font-medium transition-colors">
             View
           </Link>
-          <Button variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50 w-full text-xs h-8" onClick={(e) => { e.preventDefault(); onDelete(trip._id); }}>
+          <Button variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50 w-full text-xs h-8 font-bold cursor-pointer" onClick={(e) => { e.preventDefault(); onDelete(trip._id); }}>
             Delete
           </Button>
         </div>
@@ -107,10 +164,13 @@ const DashboardBudgetChart = ({ trips }: { trips: Trip[] }) => {
 };
 
 export const Dashboard = () => {
+  const toast = useToast();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [budgetFilter, setBudgetFilter] = useState<string>("All");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
 
@@ -129,13 +189,23 @@ export const Dashboard = () => {
     fetchTrips();
   }, [fetchTrips]);
 
-  const deleteTrip = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this trip?")) return;
+  const handleDeleteClick = (id: string) => {
+    setPendingDeleteId(id);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteTrip = async () => {
+    if (!pendingDeleteId) return;
     try {
-      await api.delete(`/trips/${id}`);
-      setTrips((prev) => prev.filter(t => t._id !== id));
+      await api.delete(`/trips/${pendingDeleteId}`);
+      setTrips((prev) => prev.filter(t => t._id !== pendingDeleteId));
+      toast.success("Trip itinerary deleted successfully!");
     } catch (err) {
       console.error(err);
+      toast.error("Failed to delete trip.");
+    } finally {
+      setShowDeleteConfirm(false);
+      setPendingDeleteId(null);
     }
   };
 
@@ -224,11 +294,43 @@ export const Dashboard = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredTrips.map(trip => (
-              <TripCard key={trip._id} trip={trip} onDelete={deleteTrip} />
+              <TripCard key={trip._id} trip={trip} onDelete={handleDeleteClick} />
             ))}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={(open) => !open && setShowDeleteConfirm(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-red-500" /> Delete Trip Itinerary?
+            </DialogTitle>
+            <DialogDescription className="text-slate-500 pt-2 leading-relaxed">
+              Are you sure you want to permanently delete this trip itinerary? This action cannot be undone and will remove all custom activities, expenses, and companion associations.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                setPendingDeleteId(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              className="bg-red-600 hover:bg-red-700 text-white font-bold" 
+              onClick={confirmDeleteTrip}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 };

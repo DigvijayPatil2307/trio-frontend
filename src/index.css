@@ -204,6 +204,11 @@
     page-break-after: avoid !important;
   }
 
+  .print-day-block {
+    page-break-inside: avoid !important;
+    page-break-before: always !important;
+  }
+
   /* Hide vertical timeline line for clean printing print layout */
   .border-l.border-slate-200 {
     border-left: none !important;

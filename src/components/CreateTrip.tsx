@@ -19,6 +19,7 @@ const tripSchema = z.object({
   destination: z.string().min(2, "Destination must be at least 2 characters"),
   numberOfDays: z.number().min(1, "At least 1 day required").max(30, "Max 30 days allowed"),
   budgetType: z.enum(["Low", "Medium", "High"]),
+  startDate: z.string().min(1, "Start date is required"),
 });
 
 type TripFormValues = z.infer<typeof tripSchema>;
@@ -57,6 +58,7 @@ export const CreateTrip = () => {
       budgetType: "Medium",
       destination: "",
       numberOfDays: 5,
+      startDate: new Date().toISOString().split("T")[0],
     }
   });
 
@@ -131,7 +133,7 @@ export const CreateTrip = () => {
       const isValid = await trigger("destination");
       if (isValid) setStep(2);
     } else if (step === 2) {
-      const isValid = await trigger("numberOfDays");
+      const isValid = await trigger(["numberOfDays", "startDate"]);
       if (isValid) setStep(3);
     } else if (step === 3) {
       setStep(4);
@@ -251,7 +253,7 @@ export const CreateTrip = () => {
           <div className="space-y-6 animate-in fade-in slide-in-from-right-10 duration-200">
             <div className="space-y-2">
               <h2 className="text-2xl font-bold text-slate-800">How long is the trip?</h2>
-              <p className="text-sm text-slate-500">Specify the total number of days you plan to travel (1 to 30 days).</p>
+              <p className="text-sm text-slate-500">Specify the dates and duration you plan to travel.</p>
             </div>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -285,6 +287,17 @@ export const CreateTrip = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Start Date Picker */}
+              <div className="space-y-2 pt-4 border-t border-slate-100">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
+                <Input 
+                  className="h-14 border-slate-200 focus-visible:ring-indigo-600 text-base"
+                  type="date" 
+                  {...register("startDate")} 
+                />
+                {errors.startDate && <p className="text-red-500 text-sm">{errors.startDate.message}</p>}
               </div>
             </div>
           </div>

@@ -53,6 +53,32 @@ const extractPlaceName = (desc: string) => {
   return place || desc;
 };
 
+const getFallbackImageByCategory = (text: string) => {
+  const t = text.toLowerCase();
+  if (t.includes("hotel") || t.includes("stay") || t.includes("resort") || t.includes("villa") || t.includes("check into") || t.includes("accommodation") || t.includes("pearl") || t.includes("lemon tree") || t.includes("sayaji")) {
+    return "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=600&auto=format&fit=crop";
+  }
+  if (t.includes("eat") || t.includes("dine") || t.includes("dinner") || t.includes("lunch") || t.includes("breakfast") || t.includes("food") || t.includes("restaurant") || t.includes("cafe") || t.includes("tasting") || t.includes("sweet") || t.includes("basundi") || t.includes("jaggery")) {
+    return "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600&auto=format&fit=crop";
+  }
+  if (t.includes("shop") || t.includes("market") || t.includes("bazaar") || t.includes("mall") || t.includes("buying") || t.includes("souvenir")) {
+    return "https://images.unsplash.com/photo-1483985988355-763728e1935b?w=600&auto=format&fit=crop";
+  }
+  if (t.includes("bar") || t.includes("club") || t.includes("nightlife") || t.includes("pub") || t.includes("drink")) {
+    return "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop";
+  }
+  if (t.includes("park") || t.includes("beach") || t.includes("lake") || t.includes("river") || t.includes("nature") || t.includes("forest") || t.includes("garden") || t.includes("mountain") || t.includes("hill")) {
+    return "https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=600&auto=format&fit=crop";
+  }
+  if (t.includes("temple") || t.includes("church") || t.includes("fort") || t.includes("palace") || t.includes("museum") || t.includes("shrine") || t.includes("history") || t.includes("monument") || t.includes("ruin") || t.includes("castle") || t.includes("hawa mahal") || t.includes("amber")) {
+    return "https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=600&auto=format&fit=crop";
+  }
+  if (t.includes("adventure") || t.includes("hike") || t.includes("trek") || t.includes("ride") || t.includes("climb") || t.includes("safari")) {
+    return "https://images.unsplash.com/photo-1533240332313-0db49b439ad3?w=600&auto=format&fit=crop";
+  }
+  return "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=600&auto=format&fit=crop";
+};
+
 const PlaceImage = ({ placeName, className }: { placeName: string; className?: string }) => {
   const cleanedName = placeName
     .replace(/^(visit|explore|enjoy|dinner at|lunch at|breakfast at|sightseeing at|go to|see|tour|walk around|relax at|stay at|check into)\s+/i, '')
@@ -64,17 +90,11 @@ const PlaceImage = ({ placeName, className }: { placeName: string; className?: s
     return <div className={`bg-slate-100 animate-pulse ${className}`} />;
   }
 
-  if (!imageUrl) {
-    return (
-      <div className={`bg-slate-100 flex items-center justify-center text-slate-300 ${className}`}>
-        <ImageIcon className="w-4 h-4" />
-      </div>
-    );
-  }
+  const finalImageUrl = imageUrl || getFallbackImageByCategory(placeName);
 
   return (
     <img
-      src={imageUrl}
+      src={finalImageUrl}
       alt={placeName}
       className={`object-cover ${className}`}
       referrerPolicy="no-referrer"
@@ -89,6 +109,27 @@ interface Expense {
   description: string;
   date: string;
 }
+
+const getTripStatus = (startDateStr: string | Date, daysCount: number) => {
+  if (!startDateStr) return "upcoming";
+  
+  const start = new Date(startDateStr);
+  start.setHours(0,0,0,0);
+  
+  const end = new Date(start);
+  end.setDate(start.getDate() + daysCount);
+  end.setHours(23,59,59,999);
+  
+  const now = new Date();
+  
+  if (now < start) {
+    return "upcoming";
+  } else if (now > end) {
+    return "completed";
+  } else {
+    return "active";
+  }
+};
 
 export const TripDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -105,9 +146,14 @@ export const TripDetails = () => {
   const [copied, setCopied] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [companions, setCompanions] = useState<string[]>(["alex.traveler@gmail.com", "sophia.explorer@gmail.com"]);
+  const [companions, setCompanions] = useState<string[]>([]);
   const [showDeleteDayConfirm, setShowDeleteDayConfirm] = useState(false);
   const [pendingDeleteDayInfo, setPendingDeleteDayInfo] = useState<{ day: number; activityIndex: number } | null>(null);
+
+  // Edit Date States
+  const [showDateEditDialog, setShowDateEditDialog] = useState(false);
+  const [newStartDate, setNewStartDate] = useState("");
+  const [newNumberOfDays, setNewNumberOfDays] = useState(5);
 
   const navigate = useNavigate();
 
@@ -118,19 +164,23 @@ export const TripDetails = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleInvite = () => {
+  const handleInvite = async () => {
     if (!inviteEmail || !inviteEmail.includes("@")) {
       toast.warning("Please enter a valid companion email address.");
       return;
     }
-    if (!companions.includes(inviteEmail)) {
-      setCompanions((prev) => [...prev, inviteEmail]);
-      toast.success(`Successfully invited ${inviteEmail}!`);
-    } else {
-      toast.info(`${inviteEmail} is already in the companion list.`);
+    try {
+      toast.info(`Sending invitation email to ${inviteEmail}...`);
+      const res = await api.patch(`/trips/${id}/invite`, { email: inviteEmail });
+      setTrip(res.data);
+      setCompanions(res.data.companions || []);
+      toast.success(`Successfully sent email invitation to ${inviteEmail}!`);
+      setInviteEmail("");
+      setShowInviteModal(false);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.response?.data?.error || "Failed to send invitation email.");
     }
-    setInviteEmail("");
-    setShowInviteModal(false);
   };
 
   useEffect(() => {
@@ -141,11 +191,28 @@ export const TripDetails = () => {
     try {
       const res = await api.get(`/trips/${id}`);
       setTrip(res.data);
+      setCompanions(res.data.companions || []);
     } catch (error) {
       console.error(error);
       navigate("/dashboard");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateDates = async () => {
+    try {
+      const res = await api.put(`/trips/${id}`, {
+        startDate: newStartDate,
+        numberOfDays: newNumberOfDays
+      });
+      setTrip(res.data);
+      setCompanions(res.data.companions || []);
+      setShowDateEditDialog(false);
+      toast.success("Trip dates updated successfully!");
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to update trip dates.");
     }
   };
 
@@ -392,9 +459,60 @@ export const TripDetails = () => {
     }
   }, [mapCenter, markers]);
 
-  const handleActivityClick = (day: number, idx: number) => {
+  const handleActivityClick = async (day: number, idx: number) => {
     const markerId = `${day}-${idx}`;
-    const targetMarker = markers.find((m) => m.id === markerId);
+    let targetMarker = markers.find((m) => m.id === markerId);
+    
+    if (!targetMarker && mapInstance && trip) {
+      const dayPlan = trip.itinerary.days.find(d => d.day === day);
+      if (dayPlan) {
+        const activityText = dayPlan.activities[idx];
+        if (activityText) {
+          try {
+            const cleanedName = extractPlaceName(activityText);
+            toast.info(`Locating "${cleanedName}" on map...`);
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanedName + ", " + trip.destination)}&limit=1`
+            );
+            const data = await res.json();
+            if (data && data.length > 0) {
+              const newMarker = {
+                id: markerId,
+                title: activityText,
+                lat: parseFloat(data[0].lat),
+                lon: parseFloat(data[0].lon)
+              };
+              
+              const L = (window as any).L;
+              if (L) {
+                const customPopup = `
+                  <div style="font-family: sans-serif; font-size: 12px; padding: 4px; max-width: 150px;">
+                    <strong style="color: #4f46e5; display: block; margin-bottom: 2px;">Activity</strong>
+                    <span style="font-weight: 600; color: #1e293b; line-clamp: 2;">${activityText}</span>
+                  </div>
+                `;
+                const mapMarker = L.marker([newMarker.lat, newMarker.lon])
+                  .addTo(mapInstance)
+                  .bindPopup(customPopup);
+                (newMarker as any).leafletMarker = mapMarker;
+              }
+              
+              setMarkers(prev => [...prev, newMarker]);
+              targetMarker = newMarker;
+            } else {
+              toast.warning(`Could not locate "${cleanedName}". Centering on destination city.`);
+              if (mapCenter[0] !== 0) {
+                mapInstance.setView(mapCenter, 14, { animate: true, duration: 1.0 });
+              }
+              return;
+            }
+          } catch (err) {
+            console.error("On-demand geocoding failed:", err);
+          }
+        }
+      }
+    }
+    
     if (targetMarker && mapInstance) {
       mapInstance.setView([targetMarker.lat, targetMarker.lon], 15, {
         animate: true,
@@ -415,14 +533,83 @@ export const TripDetails = () => {
   const accPct = Math.round((trip.itinerary.budget.accommodation / totalBudget) * 100) || 0;
   const foodPct = Math.round((trip.itinerary.budget.food / totalBudget) * 100) || 0;
 
+  const start = new Date(trip.startDate);
+  const end = new Date(start);
+  end.setDate(start.getDate() + (trip.numberOfDays - 1));
+  const dateOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+  const formattedStartDate = start.toLocaleDateString('en-US', dateOptions);
+  const formattedEndDate = end.toLocaleDateString('en-US', dateOptions);
+  
+  const tripStatus = getTripStatus(trip.startDate, trip.numberOfDays);
+  
+  const badgeColors = {
+    upcoming: "bg-indigo-100 text-indigo-700 border-indigo-200",
+    active: "bg-emerald-100 text-emerald-700 border-emerald-200 flex items-center gap-1.5",
+    completed: "bg-slate-100 text-slate-700 border-slate-200"
+  };
+
+  const badgeText = {
+    upcoming: "Upcoming",
+    active: "Active Now",
+    completed: "Completed"
+  };
+
   return (
     <div className="flex flex-col gap-6">
+      {/* Print-Only Cover Header */}
+      <div className="hidden print:block border-b-4 border-indigo-600 pb-6 mb-8">
+        <div className="flex justify-between items-end">
+          <div>
+            <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest block mb-1">Trio Personal Travel Guide</span>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">{trip.destination}</h1>
+            <p className="text-sm font-semibold text-slate-500 mt-1.5 flex items-center gap-2">
+              <CalendarIcon className="w-4 h-4 text-slate-400" />
+              <span>{formattedStartDate} — {formattedEndDate} ({trip.numberOfDays} Days)</span>
+            </p>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Budget Estimate</span>
+            <span className="text-2xl font-black text-slate-800">${totalBudget.toLocaleString()}</span>
+            <span className="text-xs font-semibold text-slate-500 block">({trip.budgetType} Budget)</span>
+          </div>
+        </div>
+        {companions.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500 font-semibold">
+            <strong className="text-slate-700">Companions:</strong>
+            <span>{companions.join(', ')}</span>
+          </div>
+        )}
+      </div>
+
       {/* Header section (replaces Welcome Header) */}
-      <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between bg-white rounded-2xl border border-slate-200 p-6 shadow-sm print:hidden">
         <div className="space-y-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">{trip.destination}</h1>
-            <p className="text-slate-500">Your upcoming {trip.numberOfDays}-day adventure.</p>
+            <h1 className="text-2xl font-bold text-slate-800 flex flex-wrap items-center gap-3">
+              <span>{trip.destination}</span>
+              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border uppercase tracking-wider ${badgeColors[tripStatus]}`}>
+                {tripStatus === 'active' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />}
+                {badgeText[tripStatus]}
+              </span>
+            </h1>
+            <p 
+              className="text-slate-500 text-sm font-semibold flex items-center gap-2 cursor-pointer hover:text-indigo-600 transition-colors mt-1.5 no-print"
+              onClick={() => {
+                setNewStartDate(new Date(trip.startDate).toISOString().split('T')[0]);
+                setNewNumberOfDays(trip.numberOfDays);
+                setShowDateEditDialog(true);
+              }}
+              title="Click to edit dates"
+            >
+              <CalendarIcon className="w-4 h-4 text-indigo-500 shrink-0" />
+              <span>{formattedStartDate} — {formattedEndDate} ({trip.numberOfDays} Days)</span>
+              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 border border-indigo-100">Edit</span>
+            </p>
+            {/* Print-only dates display */}
+            <p className="hidden print:flex items-center gap-1.5 text-sm text-slate-600 font-semibold mt-1">
+              <CalendarIcon className="w-4 h-4 text-slate-500 shrink-0" />
+              <span>{formattedStartDate} — {formattedEndDate} ({trip.numberOfDays} Days)</span>
+            </p>
           </div>
           <div className="flex flex-wrap gap-2 no-print">
             <Button variant="outline" size="sm" className="rounded-full flex items-center gap-1.5 font-bold h-9 text-xs" onClick={handleShare}>
@@ -453,9 +640,9 @@ export const TripDetails = () => {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6">
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
         {/* Main Active Trip Bento */}
-        <div className="flex-1 lg:w-2/3 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+        <div className="flex-grow lg:w-2/3 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div className="h-48 md:h-64 bg-slate-900 relative shrink-0 overflow-hidden">
             {imageUrl ? (
               <img 
@@ -469,7 +656,9 @@ export const TripDetails = () => {
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/40 to-transparent"></div>
             <div className="absolute bottom-6 left-6 md:left-8 right-6 md:right-8 text-white z-10 flex flex-col items-start">
-              <span className="bg-indigo-500/80 backdrop-blur-md text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-3 inline-flex items-center gap-1"><Map className="w-3 h-3" /> Active Itinerary</span>
+              <span className="bg-indigo-500/80 backdrop-blur-md text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-3 inline-flex items-center gap-1">
+                <Map className="w-3 h-3" /> {tripStatus === 'active' ? 'Active Now' : tripStatus === 'completed' ? 'Completed' : 'Upcoming'} Itinerary
+              </span>
               <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight drop-shadow-lg line-clamp-1">{trip.destination}</h2>
               <div className="flex flex-wrap gap-2 mt-3">
                 {trip.interests.map((interest, i) => (
@@ -480,7 +669,7 @@ export const TripDetails = () => {
           </div>
           
           {/* Connected timeline daily schedule */}
-          <div className="flex-1 p-4 md:p-6 flex flex-col gap-8 overflow-y-auto max-h-[600px] scroll-smooth">
+          <div className="p-4 md:p-6 flex flex-col gap-8 scroll-smooth">
             {trip.itinerary.days.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 px-6 text-center space-y-4">
                 <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center shadow-inner animate-pulse">
@@ -501,7 +690,7 @@ export const TripDetails = () => {
               </div>
             ) : (
               trip.itinerary.days.map((dayPlan) => (
-                <div key={dayPlan.day} className="flex flex-col sm:flex-row gap-6 border-b border-slate-100 pb-8 last:border-0 last:pb-0">
+                <div key={dayPlan.day} className="flex flex-col sm:flex-row gap-6 border-b border-slate-100 pb-8 last:border-0 last:pb-0 print-day-block">
                   <div className="flex-1">
                     <h3 className="text-xs font-bold text-slate-400 uppercase mb-4">Day {dayPlan.day}: {dayPlan.title}</h3>
                   <div className="relative pl-6 border-l border-slate-200 ml-4 space-y-6">
@@ -576,7 +765,7 @@ export const TripDetails = () => {
         <div className="lg:w-1/3 flex flex-col gap-6">
           
           {/* Leaflet Map Card */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col h-[320px] shrink-0 no-print">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col h-[320px] shrink-0 no-print lg:sticky lg:top-20 z-10">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <Map className="w-4 h-4 text-indigo-500" /> Live Route Map
             </h3>
@@ -924,6 +1113,55 @@ export const TripDetails = () => {
               }}
             >
               Delete Day
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dates Dialog */}
+      <Dialog open={showDateEditDialog} onOpenChange={(open) => !open && setShowDateEditDialog(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarIcon className="w-5 h-5 text-indigo-600" /> Edit Trip Dates & Duration
+            </DialogTitle>
+            <DialogDescription className="text-slate-500 pt-2 leading-relaxed">
+              Modify the start date or duration of your trip. The itinerary end date will be updated automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
+              <Input 
+                type="date" 
+                value={newStartDate} 
+                onChange={(e) => setNewStartDate(e.target.value)} 
+                className="h-12 border-slate-200 focus-visible:ring-indigo-600 text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Duration (Days)</label>
+              <Input 
+                type="number" 
+                min="1" max="30"
+                value={newNumberOfDays} 
+                onChange={(e) => setNewNumberOfDays(parseInt(e.target.value) || 1)} 
+                className="h-12 border-slate-200 focus-visible:ring-indigo-600 text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDateEditDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold" 
+              onClick={handleUpdateDates}
+            >
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>
