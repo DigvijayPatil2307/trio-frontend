@@ -52,7 +52,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={{ showToast, success, error, info, warning }}>
       {children}
       {/* Toast Container */}
-      <div className="fixed top-5 right-5 z-50 flex flex-col gap-3 w-full max-w-[350px] pointer-events-none">
+      <div className="fixed top-5 right-5 z-[9999] flex flex-col gap-3 w-full max-w-[350px] pointer-events-none">
         {toasts.map((toast) => {
           let icon = <Info className="w-5 h-5 text-blue-500" />;
           let borderClass = "border-blue-100";

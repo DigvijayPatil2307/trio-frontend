@@ -1,11 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { Trip, DayPlan } from "../types";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./ui/card";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Separator } from "./ui/separator";
 import { Plane, Calendar as CalendarIcon, Hotel, Map, HandCoins, AlertCircle, RefreshCw, Plus, X, Image as ImageIcon, Share2, UserPlus, Printer, DollarSign, Trash2, Compass, Camera } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -79,25 +76,39 @@ const getFallbackImageByCategory = (text: string) => {
   return "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=600&auto=format&fit=crop";
 };
 
-const PlaceImage = ({ placeName, className }: { placeName: string; className?: string }) => {
+const getUnsplashUrl = (query: string) => {
+  const encoded = encodeURIComponent(query);
+  // Use Unsplash source API for dynamic real photos
+  return `https://source.unsplash.com/600x400/?${encoded}`;
+};
+
+const PlaceImage = ({ placeName, destination, className }: { placeName: string; destination?: string; className?: string }) => {
   const cleanedName = placeName
     .replace(/^(visit|explore|enjoy|dinner at|lunch at|breakfast at|sightseeing at|go to|see|tour|walk around|relax at|stay at|check into)\s+/i, '')
     .trim();
   
   const { imageUrl, loading } = useWikipediaImage(cleanedName, "");
+  const [imgError, setImgError] = useState(false);
   
   if (loading) {
     return <div className={`bg-slate-100 animate-pulse ${className}`} />;
   }
 
-  const finalImageUrl = imageUrl || getFallbackImageByCategory(placeName);
+  // Priority: 1) Wikipedia image, 2) Unsplash with place+destination, 3) category fallback
+  const unsplashQuery = destination 
+    ? `${cleanedName} ${destination}` 
+    : cleanedName;
+  
+  const primaryUrl = imageUrl || getUnsplashUrl(unsplashQuery);
+  const fallbackUrl = getFallbackImageByCategory(placeName);
 
   return (
     <img
-      src={finalImageUrl}
-      alt={placeName}
+      src={imgError ? fallbackUrl : primaryUrl}
+      alt={cleanedName}
       className={`object-cover ${className}`}
       referrerPolicy="no-referrer"
+      onError={() => setImgError(true)}
     />
   );
 };
@@ -330,8 +341,8 @@ export const TripDetails = () => {
 
   // --- MAP & GEOCODING STATE & HANDLERS ---
   const [mapCenter, setMapCenter] = useState<[number, number]>([0, 0]);
-  const [markers, setMarkers] = useState<{ id: string; title: string; lat: number; lon: number }[]>([]);
-  const [mapInstance, setMapInstance] = useState<any>(null);
+  const [markers, setMarkers] = useState<{ id: string; title: string; lat: number; lon: number; leafletMarker?: any }[]>([]);
+  const mapInstanceRef = useRef<any>(null);
 
   // Geocode destination and activities
   useEffect(() => {
@@ -416,13 +427,16 @@ export const TripDetails = () => {
       if (!container) return;
 
       // Avoid double initialization
-      if ((container as any)._leaflet_id) return;
+      if ((container as any)._leaflet_id) {
+        // Map already initialized — just update view if needed
+        return;
+      }
 
       const L = (window as any).L;
       if (!L) return;
 
       const map = L.map("leaflet-map").setView(mapCenter, 13);
-      setMapInstance(map);
+      mapInstanceRef.current = map;
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -433,14 +447,14 @@ export const TripDetails = () => {
         const customPopup = `
           <div style="font-family: sans-serif; font-size: 12px; padding: 4px; max-width: 150px;">
             <strong style="color: #4f46e5; display: block; margin-bottom: 2px;">Activity</strong>
-            <span style="font-weight: 600; color: #1e293b; line-clamp: 2;">${marker.title}</span>
+            <span style="font-weight: 600; color: #1e293b;">${marker.title}</span>
           </div>
         `;
-        const mapMarker = L.marker([marker.lat, marker.lon])
+        const leafletMarker = L.marker([marker.lat, marker.lon])
           .addTo(map)
           .bindPopup(customPopup);
         
-        (marker as any).leafletMarker = mapMarker;
+        marker.leafletMarker = leafletMarker;
       });
     };
 
@@ -461,9 +475,10 @@ export const TripDetails = () => {
 
   const handleActivityClick = async (day: number, idx: number) => {
     const markerId = `${day}-${idx}`;
+    const map = mapInstanceRef.current;
     let targetMarker = markers.find((m) => m.id === markerId);
     
-    if (!targetMarker && mapInstance && trip) {
+    if (!targetMarker && map && trip) {
       const dayPlan = trip.itinerary.days.find(d => d.day === day);
       if (dayPlan) {
         const activityText = dayPlan.activities[idx];
@@ -476,33 +491,34 @@ export const TripDetails = () => {
             );
             const data = await res.json();
             if (data && data.length > 0) {
+              const L = (window as any).L;
+              let leafletMarker: any = null;
+              if (L) {
+                const customPopup = `
+                  <div style="font-family: sans-serif; font-size: 12px; padding: 4px; max-width: 160px;">
+                    <strong style="color: #4f46e5; display: block; margin-bottom: 2px;">Activity</strong>
+                    <span style="font-weight: 600; color: #1e293b;">${activityText}</span>
+                  </div>
+                `;
+                leafletMarker = L.marker([parseFloat(data[0].lat), parseFloat(data[0].lon)])
+                  .addTo(map)
+                  .bindPopup(customPopup);
+              }
+
               const newMarker = {
                 id: markerId,
                 title: activityText,
                 lat: parseFloat(data[0].lat),
-                lon: parseFloat(data[0].lon)
+                lon: parseFloat(data[0].lon),
+                leafletMarker
               };
-              
-              const L = (window as any).L;
-              if (L) {
-                const customPopup = `
-                  <div style="font-family: sans-serif; font-size: 12px; padding: 4px; max-width: 150px;">
-                    <strong style="color: #4f46e5; display: block; margin-bottom: 2px;">Activity</strong>
-                    <span style="font-weight: 600; color: #1e293b; line-clamp: 2;">${activityText}</span>
-                  </div>
-                `;
-                const mapMarker = L.marker([newMarker.lat, newMarker.lon])
-                  .addTo(mapInstance)
-                  .bindPopup(customPopup);
-                (newMarker as any).leafletMarker = mapMarker;
-              }
               
               setMarkers(prev => [...prev, newMarker]);
               targetMarker = newMarker;
             } else {
               toast.warning(`Could not locate "${cleanedName}". Centering on destination city.`);
-              if (mapCenter[0] !== 0) {
-                mapInstance.setView(mapCenter, 14, { animate: true, duration: 1.0 });
+              if (mapCenter[0] !== 0 && map) {
+                map.setView(mapCenter, 14, { animate: true, duration: 1.0 });
               }
               return;
             }
@@ -513,32 +529,44 @@ export const TripDetails = () => {
       }
     }
     
-    if (targetMarker && mapInstance) {
-      mapInstance.setView([targetMarker.lat, targetMarker.lon], 15, {
+    if (targetMarker && map) {
+      map.setView([targetMarker.lat, targetMarker.lon], 16, {
         animate: true,
-        duration: 1.0
+        duration: 0.8
       });
-      if ((targetMarker as any).leafletMarker) {
-        (targetMarker as any).leafletMarker.openPopup();
+      if (targetMarker.leafletMarker) {
+        targetMarker.leafletMarker.openPopup();
       }
     }
   };
 
   const { imageUrl, loading: imageLoading } = useWikipediaImage(trip?.destination || "");
 
-  if (loading || !trip) return <div className="p-6">Loading trip details...</div>;
+  if (loading || !trip) return (
+    <div className="flex items-center justify-center min-h-[40vh]">
+      <div className="flex flex-col items-center gap-4 text-slate-400">
+        <div className="w-10 h-10 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin" />
+        <p className="text-sm font-semibold">Loading your adventure...</p>
+      </div>
+    </div>
+  );
 
   const totalBudget = trip.itinerary.budget.total;
   const fltPct = Math.round((trip.itinerary.budget.flights / totalBudget) * 100) || 0;
   const accPct = Math.round((trip.itinerary.budget.accommodation / totalBudget) * 100) || 0;
   const foodPct = Math.round((trip.itinerary.budget.food / totalBudget) * 100) || 0;
 
-  const start = new Date(trip.startDate);
-  const end = new Date(start);
-  end.setDate(start.getDate() + (trip.numberOfDays - 1));
+  // Safe date calculations — guard against invalid/missing startDate
+  const hasValidStartDate = trip.startDate && !isNaN(new Date(trip.startDate).getTime());
+  const start = hasValidStartDate ? new Date(trip.startDate) : null;
+  const end = start ? new Date(start) : null;
+  if (start && end) end.setDate(start.getDate() + (trip.numberOfDays - 1));
   const dateOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-  const formattedStartDate = start.toLocaleDateString('en-US', dateOptions);
-  const formattedEndDate = end.toLocaleDateString('en-US', dateOptions);
+  const formattedStartDate = start ? start.toLocaleDateString('en-US', dateOptions) : 'Not set';
+  const formattedEndDate = end ? end.toLocaleDateString('en-US', dateOptions) : 'Not set';
+  const dateLabel = hasValidStartDate 
+    ? `${formattedStartDate} — ${formattedEndDate} (${trip.numberOfDays} Days)` 
+    : `${trip.numberOfDays} Days planned`;
   
   const tripStatus = getTripStatus(trip.startDate, trip.numberOfDays);
   
@@ -564,7 +592,7 @@ export const TripDetails = () => {
             <h1 className="text-3xl font-black text-slate-900 tracking-tight">{trip.destination}</h1>
             <p className="text-sm font-semibold text-slate-500 mt-1.5 flex items-center gap-2">
               <CalendarIcon className="w-4 h-4 text-slate-400" />
-              <span>{formattedStartDate} — {formattedEndDate} ({trip.numberOfDays} Days)</span>
+              <span>{dateLabel}</span>
             </p>
           </div>
           <div className="text-right">
@@ -602,13 +630,13 @@ export const TripDetails = () => {
               title="Click to edit dates"
             >
               <CalendarIcon className="w-4 h-4 text-indigo-500 shrink-0" />
-              <span>{formattedStartDate} — {formattedEndDate} ({trip.numberOfDays} Days)</span>
+              <span>{dateLabel}</span>
               <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 border border-indigo-100">Edit</span>
             </p>
             {/* Print-only dates display */}
             <p className="hidden print:flex items-center gap-1.5 text-sm text-slate-600 font-semibold mt-1">
               <CalendarIcon className="w-4 h-4 text-slate-500 shrink-0" />
-              <span>{formattedStartDate} — {formattedEndDate} ({trip.numberOfDays} Days)</span>
+              <span>{dateLabel}</span>
             </p>
           </div>
           <div className="flex flex-wrap gap-2 no-print">
@@ -690,10 +718,17 @@ export const TripDetails = () => {
               </div>
             ) : (
               trip.itinerary.days.map((dayPlan) => (
-                <div key={dayPlan.day} className="flex flex-col sm:flex-row gap-6 border-b border-slate-100 pb-8 last:border-0 last:pb-0 print-day-block">
-                  <div className="flex-1">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-4">Day {dayPlan.day}: {dayPlan.title}</h3>
-                  <div className="relative pl-6 border-l border-slate-200 ml-4 space-y-6">
+                <div key={dayPlan.day} className="flex flex-col gap-4 border-b border-slate-100 pb-8 last:border-0 last:pb-0 print-day-block">
+                  {/* Day header + quick tools row */}
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase">Day {dayPlan.day}: {dayPlan.title}</h3>
+                    <div className="flex items-center gap-1 no-print">
+                      <button onClick={() => setActiveRegenDay(dayPlan.day)} className="text-xs font-bold hover:bg-indigo-50 px-2 py-1 rounded text-indigo-600 transition-colors cursor-pointer border border-transparent hover:border-indigo-100">Regenerate</button>
+                      <button onClick={() => setActiveAddActivityDay(dayPlan.day)} className="text-xs font-bold hover:bg-indigo-50 px-2 py-1 rounded text-indigo-600 transition-colors cursor-pointer border border-transparent hover:border-indigo-100">+ Add</button>
+                    </div>
+                  </div>
+                  {/* Timeline activities */}
+                  <div className="relative pl-6 border-l border-slate-200 ml-4 space-y-5">
                     {dayPlan.activities.map((activity, idx) => {
                       const colorVariants = [
                         { bg: "bg-orange-50", text: "text-orange-600", border: "border-orange-200" },
@@ -706,36 +741,33 @@ export const TripDetails = () => {
                       return (
                         <div 
                           key={idx} 
-                          className="group relative bg-white border border-slate-200/60 rounded-2xl p-4 flex flex-col sm:flex-row gap-4 hover:border-indigo-400 hover:shadow-sm transition-all duration-300 cursor-pointer"
+                          className="group relative bg-white border border-slate-200/60 rounded-2xl p-4 flex flex-row gap-4 items-center hover:border-indigo-400 hover:shadow-sm transition-all duration-300 cursor-pointer"
                           onClick={() => handleActivityClick(dayPlan.day, idx)}
                         >
                           {/* Connected timeline node */}
-                          <div className="absolute -left-[31px] top-5 w-2.5 h-2.5 rounded-full border-2 border-white bg-indigo-600 flex items-center justify-center shadow-sm" />
+                          <div className="absolute -left-[31px] top-5 w-2.5 h-2.5 rounded-full border-2 border-white bg-indigo-600 shadow-sm" />
 
                           {/* Dynamic actual place image preview */}
-                          <div className="w-full sm:w-24 h-24 shrink-0 rounded-xl overflow-hidden shadow-inner border border-slate-100 bg-slate-50">
-                            <PlaceImage placeName={activity} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                          <div className="w-20 h-20 shrink-0 rounded-xl overflow-hidden border border-slate-100 bg-slate-50">
+                            <PlaceImage placeName={activity} destination={trip.destination} className="w-full h-full" />
                           </div>
 
-                          <div className="flex-1 flex flex-col justify-between">
-                            <div>
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${v.bg} ${v.text} border ${v.border}`}>
-                                  Activity 0{idx + 1}
-                                </span>
-                              </div>
-                              <p className="text-sm font-bold text-slate-800 leading-snug">{activity}</p>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${v.bg} ${v.text} border ${v.border}`}>
+                                Activity 0{idx + 1}
+                              </span>
                             </div>
-                            
-                            <p className="text-[11px] text-slate-400 font-semibold mt-2 group-hover:text-indigo-600 transition-colors flex items-center gap-1">
-                              <Compass className="w-3.5 h-3.5" /> Click to center on map
+                            <p className="text-sm font-bold text-slate-800 leading-snug line-clamp-2">{activity}</p>
+                            <p className="text-[11px] text-slate-400 font-semibold mt-1.5 group-hover:text-indigo-600 transition-colors flex items-center gap-1">
+                              <Compass className="w-3 h-3" /> Click to show on map
                             </p>
                           </div>
 
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-500 h-8 w-8 px-0 shrink-0 absolute right-2 top-2 bg-white/80 no-print" 
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-500 h-8 w-8 px-0 shrink-0 bg-white/80 no-print" 
                             onClick={(e) => {
                               e.stopPropagation(); 
                               handleRemoveActivity(dayPlan.day, idx);
@@ -749,14 +781,6 @@ export const TripDetails = () => {
                     })}
                   </div>
                 </div>
-                <div className="w-full sm:w-40 sm:border-l sm:border-slate-100 sm:pl-6 shrink-0 no-print">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 sm:block hidden">Quick Tools</h3>
-                  <div className="flex flex-row sm:flex-col gap-2">
-                    <button onClick={() => setActiveRegenDay(dayPlan.day)} className="flex-1 sm:flex-none text-left p-2 text-xs font-bold sm:font-semibold hover:bg-indigo-50 rounded text-indigo-600 transition-colors cursor-pointer">Regenerate</button>
-                    <button onClick={() => setActiveAddActivityDay(dayPlan.day)} className="flex-1 sm:flex-none text-left p-2 text-xs font-bold sm:font-semibold hover:bg-indigo-50 rounded text-indigo-600 transition-colors cursor-pointer">Add Activity</button>
-                  </div>
-                </div>
-              </div>
             )))}
           </div>
         </div>
@@ -765,7 +789,7 @@ export const TripDetails = () => {
         <div className="lg:w-1/3 flex flex-col gap-6">
           
           {/* Leaflet Map Card */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col h-[320px] shrink-0 no-print lg:sticky lg:top-20 z-10">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm overflow-hidden flex flex-col h-[320px] shrink-0 no-print lg:sticky lg:top-20" style={{ zIndex: 5 }}>
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <Map className="w-4 h-4 text-indigo-500" /> Live Route Map
             </h3>
@@ -930,7 +954,7 @@ export const TripDetails = () => {
                   <div key={idx} className="group flex gap-3.5 items-start">
                     {/* Hotel dynamic photo preview */}
                     <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-slate-100 bg-slate-50">
-                      <PlaceImage placeName={hotel.name + ", " + trip.destination} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                      <PlaceImage placeName={hotel.name} destination={trip.destination} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     </div>
                     <div className="min-w-0">
                       <p className={`text-[10px] font-black ${color.label} uppercase tracking-widest mb-0.5`}>{hotel.category}</p>
